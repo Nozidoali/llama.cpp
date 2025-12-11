@@ -29,7 +29,11 @@ foreach(asset ${PUBLIC_ASSETS})
 endforeach()
 
 add_executable(${TARGET} ${TARGET_SRCS})
-install(TARGETS ${TARGET} RUNTIME)
+if(LLAMA_TOOLS_INSTALL)
+    if(NOT LLAMA_TOOLS_INSTALL_LIST OR "${TARGET}" IN_LIST LLAMA_TOOLS_INSTALL_LIST)
+        install(TARGETS ${TARGET} RUNTIME)
+    endif()
+endif()
 
 target_include_directories(${TARGET} PRIVATE ../mtmd)
 target_include_directories(${TARGET} PRIVATE ${CMAKE_SOURCE_DIR})

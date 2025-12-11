@@ -5,5 +5,7 @@ target_include_directories(${TARGET} PRIVATE ../../common)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if(LLAMA_TOOLS_INSTALL)
-    install(TARGETS ${TARGET} RUNTIME)
+    if(NOT LLAMA_TOOLS_INSTALL_LIST OR "${TARGET}" IN_LIST LLAMA_TOOLS_INSTALL_LIST)
+        install(TARGETS ${TARGET} RUNTIME)
+    endif()
 endif()

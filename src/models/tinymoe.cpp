@@ -1,6 +1,7 @@
 #include "models.h"
 
-llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_params & params) :
+    llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
     GGML_ASSERT(n_embd_head == hparams.n_rot);
@@ -8,9 +9,9 @@ llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
-    inpL = build_inp_embd(model.tok_embd);
-    ggml_tensor * inp_pos = build_inp_pos();
-    auto * inp_attn = build_attn_inp_no_cache();
+    inpL                      = build_inp_embd(model.tok_embd);
+    ggml_tensor * inp_pos     = build_inp_pos();
+    auto *        inp_attn    = build_attn_inp_no_cache();
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
@@ -33,49 +34,39 @@ llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_
             Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
             Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 
-            Qcur = ggml_rope_ext(
-                    ctx0, Qcur, inp_pos, nullptr,
-                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-                    ext_factor, attn_factor, beta_fast, beta_slow
-                    );
+            Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                                 ext_factor, attn_factor, beta_fast, beta_slow);
 
-            Kcur = ggml_rope_ext(
-                    ctx0, Kcur, inp_pos, nullptr,
-                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-                    ext_factor, attn_factor, beta_fast, beta_slow
-                    );
+            Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                                 ext_factor, attn_factor, beta_fast, beta_slow);
 
             cb(Qcur, "Qcur", il);
             cb(Kcur, "Kcur", il);
             cb(Vcur, "Vcur", il);
 
-            cur = build_attn(inp_attn,
-                    model.layers[il].wo, NULL,
-                    Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+            cur = build_attn(inp_attn, model.layers[il].wo, NULL, Qcur, Kcur, Vcur, nullptr, nullptr, nullptr,
+                             1.0f / sqrtf(float(n_embd_head)), il);
         }
-        
+
         if (il == n_layer - 1 && inp_out_ids) {
-            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+            cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
             inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
         }
-        
+
         ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
         cb(ffn_inp, "ffn_inp", il);
 
         cur = build_norm(ffn_inp, model.layers[il].ffn_norm, NULL, LLM_NORM_RMS, il);
         cb(cur, "ffn_norm", il);
 
+        // TinyMoE: Gate is now in correct shape (n_embd, n_expert) after GGUF conversion
+        // Use it directly - no transpose needed
         cur = build_moe_ffn(cur,
-                model.layers[il].ffn_gate_inp,
-                model.layers[il].ffn_up_exps,
-                model.layers[il].ffn_gate_exps,
-                model.layers[il].ffn_down_exps,
-                nullptr,
-                n_expert, n_expert_used,
-                LLM_FFN_SILU, false,
-                false, 0.0,
-                LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
-                il);
+                            model.layers[il].ffn_gate_inp,  // Use gate directly
+                            model.layers[il].ffn_up_exps, model.layers[il].ffn_gate_exps,
+                            model.layers[il].ffn_down_exps, nullptr, n_expert, n_expert_used, LLM_FFN_SILU,
+                            true,  // norm_w = true: normalize weights to 1.0 for hard one-hot routing
+                            false, 0.0, LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il);
         cb(cur, "ffn_moe_out", il);
 
         cur = ggml_add(ctx0, cur, ffn_inp);

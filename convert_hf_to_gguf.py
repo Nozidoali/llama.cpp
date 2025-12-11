@@ -2448,6 +2448,7 @@ class LlamaModel(TextModel):
 @ModelBase.register("TinyMoE", "LlamaMoEForCausalLM")
 class TinyMoEModel(LlamaModel):
     model_arch = gguf.MODEL_ARCH.TINYMOE
+    undo_permute = True  # Keep permute behavior from LlamaModel
     _experts: list[dict[str, Tensor]] | None = None
 
     def __init__(self, *args, **kwargs):
@@ -2494,8 +2495,14 @@ class TinyMoEModel(LlamaModel):
                 return []
         
         if name.endswith(".mlp.gate.weight"):
+            # TinyMoE gate weights must be passed through correctly
+            # HF format: (n_expert, n_embd) e.g. (2, 768)
+            # llama.cpp expects: (n_expert, n_embd) - same format
             assert bid is not None
-            return [(self.map_tensor_name(name), data_torch)]
+            
+            # The parent class just returns the tensor as-is, which should work
+            # but we need to ensure lazy tensors don't cause issues
+            return super().modify_tensors(data_torch, name, bid)
         
         return super().modify_tensors(data_torch, name, bid)
 
