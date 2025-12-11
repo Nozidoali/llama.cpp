@@ -30,9 +30,7 @@ endforeach()
 
 add_executable(${TARGET} ${TARGET_SRCS})
 if(LLAMA_TOOLS_INSTALL)
-    if(NOT LLAMA_TOOLS_INSTALL_LIST OR "${TARGET}" IN_LIST LLAMA_TOOLS_INSTALL_LIST)
-        install(TARGETS ${TARGET} RUNTIME)
-    endif()
+    install(TARGETS ${TARGET} RUNTIME)
 endif()
 
 target_include_directories(${TARGET} PRIVATE ../mtmd)

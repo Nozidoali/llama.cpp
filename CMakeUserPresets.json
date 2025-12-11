@@ -22,7 +22,9 @@
             "GGML_LLAMAFILE":   "OFF",
             "GGML_OPENCL":      "ON",
             "GGML_HEXAGON":     "ON",
-            "LLAMA_CURL":       "OFF"
+            "LLAMA_CURL":       "OFF",
+            "LLAMA_TOOLS_BUILD_LIST":   "main;llama-bench;quantize",
+            "LLAMA_TOOLS_INSTALL_LIST": "llama-cli;llama-bench;llama-quantize"
         }
     },
 

@@ -90,10 +90,6 @@ option(LLAMA_BUILD_EXAMPLES "llama: build examples"       ${LLAMA_STANDALONE})
 option(LLAMA_BUILD_SERVER   "llama: build server example" ${LLAMA_STANDALONE})
 option(LLAMA_TOOLS_INSTALL  "llama: install tools"        ${LLAMA_TOOLS_INSTALL_DEFAULT})
 
-# tools selection
-set(LLAMA_TOOLS_BUILD_LIST   "" CACHE STRING "Semicolon-separated list of tool subdirectories to build (empty = all)")
-set(LLAMA_TOOLS_INSTALL_LIST "" CACHE STRING "Semicolon-separated list of tool targets to install (empty = all)")
-
 # 3rd party libs
 option(LLAMA_CURL       "llama: use libcurl to download model from an URL" ON)
 option(LLAMA_OPENSSL    "llama: use openssl to support HTTPS" OFF)
