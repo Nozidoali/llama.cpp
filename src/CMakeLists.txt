@@ -83,6 +83,7 @@ add_library(llama
             models/jamba.cpp
             models/lfm2.cpp
             models/llada-moe.cpp
+            models/tinymoe.cpp
             models/llada.cpp
             models/llama-iswa.cpp
             models/llama.cpp

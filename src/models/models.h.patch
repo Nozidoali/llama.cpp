@@ -1,0 +1,13 @@
+--- a/models.h
++++ b/models.h
+@@ -298,6 +298,10 @@ struct llm_build_llada_moe : public llm_graph_context {
+     llm_build_llada_moe(const llama_model & model, const llm_graph_params & params);
+ };
+ 
++struct llm_build_tinymoe : public llm_graph_context {
++    llm_build_tinymoe(const llama_model & model, const llm_graph_params & params);
++};
++
+ struct llm_build_llama : public llm_graph_context {
+     llm_build_llama(const llama_model & model, const llm_graph_params & params);
+ };

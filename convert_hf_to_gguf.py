@@ -2443,6 +2443,62 @@ class LlamaModel(TextModel):
                 raise ValueError(f"Unprocessed experts: {experts}")
 
 
+
+
+@ModelBase.register("TinyMoE", "LlamaMoEForCausalLM")
+class TinyMoEModel(LlamaModel):
+    model_arch = gguf.MODEL_ARCH.TINYMOE
+    _experts: list[dict[str, Tensor]] | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._experts = [{} for _ in range(self.block_count)]
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        
+        n_experts = self.hparams.get("n_experts", 2)
+        self.gguf_writer.add_expert_count(n_experts)
+        self.gguf_writer.add_expert_used_count(self.hparams.get("moe_top_k", 1))
+        
+        logger.info(f"TinyMoE model with {n_experts} experts, top-{self.hparams.get('moe_top_k', 1)} routing")
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if "mlp.experts." in name:
+            n_experts = self.hparams.get("n_experts", 2)
+            assert bid is not None
+
+            if self._experts is None:
+                self._experts = [{} for _ in range(self.block_count)]
+
+            self._experts[bid][name] = data_torch
+
+            if len(self._experts[bid]) >= n_experts * 3:
+                tensors: list[tuple[str, Tensor]] = []
+
+                for w_name in ["gate_proj", "up_proj", "down_proj"]:
+                    datas: list[Tensor] = []
+
+                    for xid in range(n_experts):
+                        ename = f"model.layers.{bid}.mlp.experts.{xid}.{w_name}.weight"
+                        datas.append(self._experts[bid][ename])
+                        del self._experts[bid][ename]
+
+                    data_torch = torch.stack(datas, dim=0)
+                    merged_name = f"model.layers.{bid}.mlp.experts.{w_name}.weight"
+                    new_name = self.map_tensor_name(merged_name)
+                    tensors.append((new_name, data_torch))
+
+                return tensors
+            else:
+                return []
+        
+        if name.endswith(".mlp.gate.weight"):
+            assert bid is not None
+            return [(self.map_tensor_name(name), data_torch)]
+        
+        return super().modify_tensors(data_torch, name, bid)
+
 @ModelBase.register("ArceeForCausalLM")
 class ArceeModel(LlamaModel):
     model_arch = gguf.MODEL_ARCH.ARCEE
