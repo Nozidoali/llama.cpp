@@ -11,7 +11,7 @@ llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_
 
     inpL                      = build_inp_embd(model.tok_embd);
     ggml_tensor * inp_pos     = build_inp_pos();
-    auto *        inp_attn    = build_attn_inp_no_cache();
+    auto *        inp_attn    = build_attn_inp_kv();  // FIX: Use KV cache like LLAMA
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
@@ -59,15 +59,26 @@ llm_build_tinymoe::llm_build_tinymoe(const llama_model & model, const llm_graph_
         cur = build_norm(ffn_inp, model.layers[il].ffn_norm, NULL, LLM_NORM_RMS, il);
         cb(cur, "ffn_norm", il);
 
-        // TinyMoE: Gate is now in correct shape (n_embd, n_expert) after GGUF conversion
-        // Use it directly - no transpose needed
-        cur = build_moe_ffn(cur,
-                            model.layers[il].ffn_gate_inp,  // Use gate directly
-                            model.layers[il].ffn_up_exps, model.layers[il].ffn_gate_exps,
-                            model.layers[il].ffn_down_exps, nullptr, n_expert, n_expert_used, LLM_FFN_SILU,
-                            true,  // norm_w = true: normalize weights to 1.0 for hard one-hot routing
-                            false, 0.0, LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il);
-        cb(cur, "ffn_moe_out", il);
+        // Support both dense mode (n_expert=0) and MoE mode (n_expert>0), like LLAMA
+        if (model.layers[il].ffn_gate_inp == nullptr) {
+            // Dense mode: use regular FFN (n_expert=0)
+            cur = build_ffn(cur, model.layers[il].ffn_up, nullptr, nullptr,  // up, up_b, up_s
+                            model.layers[il].ffn_gate, nullptr, nullptr,     // gate, gate_b, gate_s
+                            model.layers[il].ffn_down, nullptr, nullptr,     // down, down_b, down_s
+                            nullptr,                                         // act_scales
+                            LLM_FFN_SILU,                                    // activation
+                            LLM_FFN_PAR,                                     // gate type
+                            il);
+            cb(cur, "ffn_out", il);
+        } else {
+            // MoE mode: use expert tensors (n_expert>0)
+            cur = build_moe_ffn(cur, model.layers[il].ffn_gate_inp, model.layers[il].ffn_up_exps,
+                                model.layers[il].ffn_gate_exps, model.layers[il].ffn_down_exps, nullptr, n_expert,
+                                n_expert_used, LLM_FFN_SILU,
+                                true,  // norm_w = true: normalize weights to 1.0 for hard one-hot routing
+                                false, 0.0, LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il);
+            cb(cur, "ffn_moe_out", il);
+        }
 
         cur = ggml_add(ctx0, cur, ffn_inp);
         cur = build_cvec(cur, il);

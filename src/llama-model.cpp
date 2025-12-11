@@ -3561,9 +3561,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                             create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
                     }
 
-                    GGML_ASSERT(n_expert > 0 && "TinyMoE requires n_expert > 0");
-                    GGML_ASSERT(n_expert_used > 0 && "TinyMoE requires n_expert_used > 0");
-
                     for (int i = 0; i < n_layer; ++i) {
                         auto & layer = layers[i];
 
@@ -3581,17 +3578,27 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), { n_rot / 2 },
                                                          TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
 
-                        // TinyMoE: GGUF conversion produces (n_embd, n_expert) format
-                        layer.ffn_gate_inp =
-                            create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), { n_embd, n_expert }, 0);
-
                         GGML_ASSERT(n_ff > 0);
-                        layer.ffn_gate_exps =
-                            create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), { n_embd, n_ff, n_expert }, 0);
-                        layer.ffn_down_exps =
-                            create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), { n_ff, n_embd, n_expert }, 0);
-                        layer.ffn_up_exps =
-                            create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS, "weight", i), { n_embd, n_ff, n_expert }, 0);
+
+                        // Support both dense mode (n_expert=0) and MoE mode (n_expert>0)
+                        if (n_expert == 0) {
+                            // Dense mode: use regular FFN tensors like LLAMA
+                            layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), { n_embd, n_ff }, 0);
+                            layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
+                            layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, n_ff }, 0);
+                        } else {
+                            // MoE mode: use 3D expert tensors
+                            GGML_ASSERT(n_expert_used > 0 && "TinyMoE MoE mode requires n_expert_used > 0");
+
+                            layer.ffn_gate_inp =
+                                create_tensor(tn(LLM_TENSOR_FFN_GATE_INP, "weight", i), { n_embd, n_expert }, 0);
+                            layer.ffn_gate_exps =
+                                create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), { n_embd, n_ff, n_expert }, 0);
+                            layer.ffn_down_exps =
+                                create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), { n_ff, n_embd, n_expert }, 0);
+                            layer.ffn_up_exps =
+                                create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS, "weight", i), { n_embd, n_ff, n_expert }, 0);
+                        }
                     }
                 }
                 break;
