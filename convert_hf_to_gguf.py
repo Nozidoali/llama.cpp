@@ -2447,9 +2447,8 @@ class LlamaModel(TextModel):
 
 @ModelBase.register("TinyMoE", "LlamaMoEForCausalLM")
 class TinyMoEModel(LlamaModel):
-    # HARDCODED: Keep TINYMOE arch but convert to dense mode using expert 0
     model_arch = gguf.MODEL_ARCH.TINYMOE
-    undo_permute = True  # Keep permute behavior from LlamaModel
+    undo_permute = True
     _experts: list[dict[str, Tensor]] | None = None
 
     def __init__(self, *args, **kwargs):
@@ -2458,12 +2457,13 @@ class TinyMoEModel(LlamaModel):
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
-        
-        # HARDCODED: Set n_expert = 0 to disable MoE code paths, use dense FFN
-        self.gguf_writer.add_expert_count(0)
-        self.gguf_writer.add_expert_used_count(0)
-        
-        logger.info(f"TinyMoE -> Converting to dense mode (n_expert=0) using expert 0 weights")
+
+        n_experts = self.hparams.get("n_experts", 2)
+        moe_top_k = self.hparams.get("moe_top_k", 1)
+        self.gguf_writer.add_expert_count(n_experts)
+        self.gguf_writer.add_expert_used_count(moe_top_k)
+
+        logger.info(f"TinyMoE -> MoE mode: n_experts={n_experts}, top_k={moe_top_k}")
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         if "mlp.experts." in name:
@@ -2478,40 +2478,38 @@ class TinyMoEModel(LlamaModel):
             if len(self._experts[bid]) >= n_experts * 3:
                 tensors: list[tuple[str, Tensor]] = []
 
-                # HARDCODED: Save only expert 0 as regular dense FFN tensors
-                logger.info(f"Layer {bid}: Saving only expert 0 as dense FFN")
-                
-                # Map to GGUF tensor names
-                weight_map = {
-                    "gate_proj": "ffn_gate",
-                    "up_proj": "ffn_up",
-                    "down_proj": "ffn_down"
-                }
-                
-                for w_name in ["gate_proj", "up_proj", "down_proj"]:
-                    # Get only expert 0
-                    expert_0_name = f"model.layers.{bid}.mlp.experts.0.{w_name}.weight"
-                    expert_0_tensor = self._experts[bid][expert_0_name]
-                    
-                    # Delete all expert tensors
+                # Stack all experts into 3D tensors (same as Qwen2MoE)
+                for w_name in ["down_proj", "gate_proj", "up_proj"]:
+                    datas: list[Tensor] = []
                     for xid in range(n_experts):
                         ename = f"model.layers.{bid}.mlp.experts.{xid}.{w_name}.weight"
-                        if ename in self._experts[bid]:
-                            del self._experts[bid][ename]
-                    
-                    # Use GGUF tensor name directly
-                    gguf_name = f"blk.{bid}.{weight_map[w_name]}.weight"
-                    tensors.append((gguf_name, expert_0_tensor))
+                        datas.append(self._experts[bid][ename])
+                        del self._experts[bid][ename]
 
+                    data_torch = torch.stack(datas, dim=0)
+                    merged_name = f"model.layers.{bid}.mlp.experts.{w_name}.weight"
+                    new_name = self.map_tensor_name(merged_name)
+                    tensors.append((new_name, data_torch))
+
+                logger.info(f"Layer {bid}: Stacked {n_experts} experts into 3D tensors")
                 return tensors
             else:
                 return []
-        
+
         if name.endswith(".mlp.gate.weight"):
-            # Skip MoE gating tensor when converting to dense mode (n_expert=0)
-            logger.info(f"Skipping MoE gating tensor {name} (dense mode)")
-            return []
-        
+            # Map gating network to ffn_gate_inp
+            new_name = self.map_tensor_name(name)
+            logger.info(f"Gating tensor {name} -> {new_name}")
+            return [(new_name, data_torch)]
+
+        # Truncate padded embedding/output to match tokenizer vocab size
+        # Some models pad vocab for alignment (e.g. 32000 -> 32128)
+        if name in ("model.embed_tokens.weight", "lm_head.weight"):
+            tokenizer_vocab_size = self.hparams.get("_tokenizer_vocab_size")
+            if tokenizer_vocab_size and data_torch.shape[0] > tokenizer_vocab_size:
+                logger.info(f"Truncating {name} from {data_torch.shape[0]} to {tokenizer_vocab_size} (padded vocab)")
+                data_torch = data_torch[:tokenizer_vocab_size]
+
         return super().modify_tensors(data_torch, name, bid)
 
 @ModelBase.register("ArceeForCausalLM")
